@@ -20,6 +20,7 @@ L'utente **non sa programmare**. Non legge il codice, non capisce diff, non sa c
 Trasformare il sito **www.favoleperdormire.it** (WordPress) in un ecosistema multipiattaforma a **costo 0€** che monetizzi meglio dell'attuale.
 
 - **Modello di riferimento**: Conquizzone (`aatreviso/food-war`). Architettura simile: sito web come "source of truth", app Android Capacitor che lo carica via WebView, AdMob bridge nativo per gli ads in-app.
+- **PRINCIPIO GUIDA — l'app è un guscio, NON un clone**: il sito WordPress è il prodotto completo e include già funzionalità che funzionano benissimo (es. **filtro favole**, ricerca, categorie, layout lettura). L'app NON deve ricreare nulla di tutto questo: carica il sito in WebView e basta. Si aggiungono SOLO le funzioni che il sito non può dare nativamente (TTS, offline, timer nanna) + il bridge AdMob. Stessa identica filosofia di Conquizzone.
 - **Repo GitHub Favole** (questo): `aatreviso/sito-favole`. Sarà la "casa" del guscio Capacitor + script di automazione (pipeline audio/video). NON contiene il sito WordPress (quello vive su SupportHost).
 - **Branch sandbox agente**: `claude/website-to-playstore-app-OBjJn`. Push a `main` dal sandbox potrebbe essere bloccato 403 (come in Conquizzone): in quel caso pushare sul branch agente e dare all'utente il comando di merge.
 
@@ -62,6 +63,7 @@ Mix di entrate atteso a regime (~6 mesi):
 ### Fase 2 — App Android Capacitor (settimane 2-4)
 - Package: `it.favoleperdormire.app`
 - Architettura: Capacitor 8, WebView carica `favoleperdormire.it`
+- **L'app è un GUSCIO, non un clone**: tutta la UI (homepage, filtro favole, categorie, lettura) viene dal sito WordPress. NON riscrivere componenti in HTML/JS app-side. Le uniche cose app-side sono i 3 plugin nativi + il bridge AdMob.
 - Plugin nativi obbligatori (servono a non farsi rifiutare da Google Play come "minimum functionality"):
   - **TTS**: `@capacitor-community/text-to-speech` — voce nativa Android italiana
   - **Preferiti offline**: cache IndexedDB tramite service worker
