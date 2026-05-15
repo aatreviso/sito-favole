@@ -114,6 +114,18 @@ Tempi sviluppo: 2-3 giorni.
 - [ ] Google Cloud project per TTS API: DA CREARE (account Google esistente di Conquizzone)
 - [ ] Canale YouTube "Favole per dormire": DA VERIFICARE se esiste già
 
+## 🚫 Cosa NON serve (differenze importanti da Conquizzone)
+
+Conquizzone ha **Railway + Postgres + Redis** perché è un gioco custom in Node.js: senza quel backend acceso 24/7 non funziona niente.
+
+**Favole NON ha bisogno di niente di tutto questo**:
+- Il "backend" è già WordPress, gira su SupportHost (CMS + database MySQL inclusi)
+- L'app Capacitor parla direttamente col sito WordPress (su SupportHost) e con AdMob (server Google). Niente nostro server in mezzo.
+- Pipeline audio/video (Fase 3): script batch eseguito sul **PC utente** o su **GitHub Actions free tier** (2000 min/mese). Genera i file e si spegne. NON serve server sempre acceso.
+- Backend subscription (Fase 4, opzionale): plugin PHP dentro WordPress stesso (sfrutta SupportHost), oppure **Cloudflare Workers free tier** (100k req/giorno). **NON Railway**.
+
+Cloudflare Free può eventualmente essere utile davanti a SupportHost come CDN per servire MP3 audio senza saturare banda hosting. Decisione da prendere in Fase 3.
+
 ## 🌐 Hosting e infrastruttura sito
 
 - **Hosting WordPress**: SupportHost (italiano, dedicato). Da verificare:
