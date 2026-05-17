@@ -1,0 +1,301 @@
+<!DOCTYPE html>
+<html lang="it">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Test lettura ad alta voce — Favole per Dormire</title>
+<style>
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body {
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+    background: linear-gradient(180deg, #1a1a2e 0%, #16213e 100%);
+    color: #e8e8e8;
+    min-height: 100vh;
+    padding: 24px 16px;
+  }
+  .wrapper { max-width: 640px; margin: 0 auto; }
+  h1 {
+    font-size: 22px;
+    font-weight: 600;
+    margin-bottom: 6px;
+    color: #f4d35e;
+  }
+  .subtitle { font-size: 14px; color: #9ba4b5; margin-bottom: 24px; }
+  .card {
+    background: #1f2940;
+    border-radius: 12px;
+    padding: 20px;
+    margin-bottom: 16px;
+    box-shadow: 0 4px 12px rgba(0,0,0,0.3);
+  }
+  .favola-titolo {
+    font-size: 20px;
+    font-weight: 600;
+    color: #f4d35e;
+    margin-bottom: 12px;
+  }
+  .favola-testo {
+    font-size: 17px;
+    line-height: 1.7;
+    color: #d8d8d8;
+    margin-bottom: 20px;
+  }
+  .controlli { display: flex; gap: 10px; flex-wrap: wrap; margin-bottom: 16px; }
+  button {
+    flex: 1;
+    min-width: 100px;
+    padding: 14px 18px;
+    border: none;
+    border-radius: 8px;
+    background: #f4d35e;
+    color: #16213e;
+    font-size: 16px;
+    font-weight: 600;
+    cursor: pointer;
+    transition: transform 0.1s, opacity 0.2s;
+  }
+  button:active { transform: scale(0.97); }
+  button:disabled { opacity: 0.4; cursor: not-allowed; }
+  button.secondary { background: #3d4a6b; color: #e8e8e8; }
+  .stato {
+    text-align: center;
+    padding: 8px;
+    font-size: 13px;
+    color: #9ba4b5;
+    min-height: 22px;
+  }
+  .impostazioni { display: grid; gap: 14px; }
+  .slider-row { display: grid; gap: 6px; }
+  .slider-row label {
+    font-size: 13px;
+    color: #9ba4b5;
+    display: flex;
+    justify-content: space-between;
+  }
+  input[type="range"] { width: 100%; }
+  select {
+    padding: 10px;
+    border-radius: 6px;
+    background: #16213e;
+    color: #e8e8e8;
+    border: 1px solid #3d4a6b;
+    font-size: 14px;
+    width: 100%;
+  }
+  .seleziona-favola { display: flex; gap: 8px; margin-bottom: 16px; }
+  .seleziona-favola button {
+    flex: 1;
+    padding: 10px;
+    font-size: 13px;
+    background: #3d4a6b;
+    color: #e8e8e8;
+  }
+  .seleziona-favola button.attiva {
+    background: #f4d35e;
+    color: #16213e;
+  }
+  .nota {
+    font-size: 12px;
+    color: #6b7689;
+    text-align: center;
+    margin-top: 24px;
+    line-height: 1.5;
+  }
+  .warning {
+    background: #5a3a1f;
+    color: #f4d35e;
+    padding: 12px;
+    border-radius: 8px;
+    font-size: 13px;
+    margin-bottom: 16px;
+    display: none;
+  }
+</style>
+</head>
+<body>
+<div class="wrapper">
+
+  <h1>Test lettura ad alta voce</h1>
+  <div class="subtitle">Voce nativa del dispositivo (gratis, anche offline)</div>
+
+  <div id="warning" class="warning"></div>
+
+  <div class="card">
+    <div class="seleziona-favola">
+      <button id="btn-fav-1" class="attiva" onclick="cambiaFavola(0)">Breve</button>
+      <button id="btn-fav-2" onclick="cambiaFavola(1)">Media</button>
+      <button id="btn-fav-3" onclick="cambiaFavola(2)">Lunga</button>
+    </div>
+    <div id="favola-titolo" class="favola-titolo"></div>
+    <div id="favola-testo" class="favola-testo"></div>
+  </div>
+
+  <div class="card">
+    <div class="controlli">
+      <button id="btn-play" onclick="play()">Ascolta</button>
+      <button id="btn-pause" class="secondary" onclick="pausa()" disabled>Pausa</button>
+      <button id="btn-stop" class="secondary" onclick="ferma()" disabled>Stop</button>
+    </div>
+    <div id="stato" class="stato">Pronto</div>
+  </div>
+
+  <div class="card">
+    <div class="impostazioni">
+      <div class="slider-row">
+        <label>Voce</label>
+        <select id="select-voce"></select>
+      </div>
+      <div class="slider-row">
+        <label>Velocità: <span id="val-velocita">1.0x</span></label>
+        <input type="range" id="velocita" min="0.5" max="1.5" step="0.1" value="0.95">
+      </div>
+      <div class="slider-row">
+        <label>Tono: <span id="val-tono">1.0</span></label>
+        <input type="range" id="tono" min="0.7" max="1.3" step="0.05" value="1.0">
+      </div>
+    </div>
+  </div>
+
+  <div class="nota">
+    Suggerimento: per la lettura serale, velocità 0.85-0.95 + tono 0.9 danno un effetto più rilassante.<br><br>
+    Se la voce ti sembra troppo robotica, possiamo passare alla voce premium "WaveNet" di Google (gratis fino a 4 milioni di caratteri al mese, quasi-umana).
+  </div>
+
+</div>
+
+<script>
+const favole = [
+  {
+    titolo: "La luna e il bambino",
+    testo: "Una notte, un bambino di nome Pietro non riusciva a dormire. Si avvicinò alla finestra e guardò la luna. La luna sorrise e gli disse: chiudi gli occhi, piccolo. Conta le stelle che vedi dentro di te, una, due, tre. E così Pietro contò, e mentre contava si addormentò, e la luna lo accompagnò nei suoi sogni."
+  },
+  {
+    titolo: "Il piccolo coniglio coraggioso",
+    testo: "C'era una volta un piccolo coniglio bianco che viveva ai margini del bosco. Era il più piccolo della sua famiglia, e tutti dicevano che era anche il più timido. Una sera, mentre tornava a casa, sentì un lamento provenire dal cespuglio di more. Si avvicinò con il cuore che batteva forte. Era un piccolo riccio che si era perso. Il coniglio, pur avendo paura del buio, decise di accompagnare il riccio fino alla sua tana. Quando arrivarono, la mamma del riccio ringraziò il coniglio con un grande abbraccio. Tornando a casa quella notte, il piccolo coniglio capì una cosa importante: il coraggio non è non avere paura, ma fare la cosa giusta anche quando si ha paura. E da quella notte, dormì sempre con un sorriso."
+  },
+  {
+    titolo: "Il giardino delle stelle cadenti",
+    testo: "In una valle lontana, oltre le montagne azzurre, c'era un giardino segreto dove cadevano le stelle stanche. Le stelle vi arrivavano dopo aver brillato per millenni nel cielo notturno, e lì potevano finalmente riposare tra i fiori. Il custode del giardino era un vecchio orso saggio di nome Brontolo, che ogni notte raccoglieva le stelle cadute e le sistemava nei suoi vasi di cristallo. Una notte, una bambina di nome Sofia si perse nel bosco. Camminò per ore, finché non vide una luce dorata tra gli alberi. Era il giardino di Brontolo. L'orso la accolse con una tazza di latte caldo al miele e le mostrò i suoi vasi pieni di stelle. Ogni stella, le disse, contiene un sogno. Quando i bambini dormono, le stelle che ho qui dentro volano da loro e portano i sogni più belli. Sofia rimase incantata e chiese se poteva avere una stella da portare con sé. Brontolo le diede la più piccola, una stella azzurra che brillava piano piano. Da quella notte, Sofia dormì sempre con la sua stella sul comodino. E ogni sera, prima di chiudere gli occhi, ringraziava Brontolo e il suo giardino segreto."
+  }
+];
+
+let favolaCorrente = 0;
+let utterance = null;
+let inPausa = false;
+
+function cambiaFavola(i) {
+  if (speechSynthesis.speaking) ferma();
+  favolaCorrente = i;
+  document.querySelectorAll('.seleziona-favola button').forEach((b, idx) => {
+    b.classList.toggle('attiva', idx === i);
+  });
+  document.getElementById('favola-titolo').textContent = favole[i].titolo;
+  document.getElementById('favola-testo').textContent = favole[i].testo;
+}
+
+function caricaVoci() {
+  const voci = speechSynthesis.getVoices();
+  const italiane = voci.filter(v => v.lang.startsWith('it'));
+  const select = document.getElementById('select-voce');
+  select.innerHTML = '';
+
+  if (italiane.length === 0) {
+    document.getElementById('warning').style.display = 'block';
+    document.getElementById('warning').innerHTML = 'Attenzione: nessuna voce italiana trovata sul tuo dispositivo. Su Android puoi installarla da Impostazioni > Lingue > Sintesi vocale > Motore Google > Installa dati vocali italiani.';
+  }
+
+  italiane.forEach((v, i) => {
+    const opt = document.createElement('option');
+    opt.value = i;
+    opt.textContent = v.name + ' (' + v.lang + ')';
+    select.appendChild(opt);
+  });
+}
+
+function play() {
+  if (inPausa && utterance) {
+    speechSynthesis.resume();
+    inPausa = false;
+    aggiornaStato('In lettura');
+    document.getElementById('btn-pause').disabled = false;
+    document.getElementById('btn-play').disabled = true;
+    return;
+  }
+
+  ferma();
+
+  const voci = speechSynthesis.getVoices().filter(v => v.lang.startsWith('it'));
+  const indiceVoce = parseInt(document.getElementById('select-voce').value) || 0;
+  const velocita = parseFloat(document.getElementById('velocita').value);
+  const tono = parseFloat(document.getElementById('tono').value);
+
+  utterance = new SpeechSynthesisUtterance(favole[favolaCorrente].testo);
+  if (voci[indiceVoce]) utterance.voice = voci[indiceVoce];
+  utterance.lang = 'it-IT';
+  utterance.rate = velocita;
+  utterance.pitch = tono;
+
+  utterance.onstart = () => {
+    aggiornaStato('In lettura');
+    document.getElementById('btn-play').disabled = true;
+    document.getElementById('btn-pause').disabled = false;
+    document.getElementById('btn-stop').disabled = false;
+  };
+  utterance.onend = () => {
+    aggiornaStato('Lettura terminata');
+    resettaBottoni();
+  };
+  utterance.onerror = (e) => {
+    aggiornaStato('Errore: ' + e.error);
+    resettaBottoni();
+  };
+
+  speechSynthesis.speak(utterance);
+}
+
+function pausa() {
+  if (speechSynthesis.speaking && !inPausa) {
+    speechSynthesis.pause();
+    inPausa = true;
+    aggiornaStato('In pausa');
+    document.getElementById('btn-pause').disabled = true;
+    document.getElementById('btn-play').disabled = false;
+  }
+}
+
+function ferma() {
+  if (speechSynthesis.speaking || inPausa) {
+    speechSynthesis.cancel();
+    inPausa = false;
+  }
+  resettaBottoni();
+  aggiornaStato('Pronto');
+}
+
+function resettaBottoni() {
+  document.getElementById('btn-play').disabled = false;
+  document.getElementById('btn-pause').disabled = true;
+  document.getElementById('btn-stop').disabled = true;
+}
+
+function aggiornaStato(testo) {
+  document.getElementById('stato').textContent = testo;
+}
+
+document.getElementById('velocita').addEventListener('input', (e) => {
+  document.getElementById('val-velocita').textContent = parseFloat(e.target.value).toFixed(2) + 'x';
+});
+document.getElementById('tono').addEventListener('input', (e) => {
+  document.getElementById('val-tono').textContent = parseFloat(e.target.value).toFixed(2);
+});
+
+cambiaFavola(0);
+
+if (speechSynthesis.getVoices().length > 0) {
+  caricaVoci();
+} else {
+  speechSynthesis.onvoiceschanged = caricaVoci;
+}
+</script>
+</body>
+</html>
