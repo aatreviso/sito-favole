@@ -7,11 +7,16 @@ Genera un video 9:16 (1080x1920) partendo da:
 
 Output:
 - audio/<slug>.mp3   (solo audio, per modalita podcast)
-- video/<slug>.mp4   (video con immagine + titolo + sottotitoli + watermark)
+- video/<slug>.mp4   (video con immagine + titolo + sottotitoli + branding)
+
+Branding: font Pacifico per il titolo, Coming Soon per i sottotitoli,
+palette blu navy #103f65 + oro #ad9853, logo gufetto in basso.
 """
 import argparse
 import base64
+import math
 import os
+import random
 import re
 import subprocess
 import sys
@@ -24,16 +29,26 @@ ELEVENLABS_API = "https://api.elevenlabs.io/v1/text-to-speech/{voice_id}/with-ti
 DEFAULT_VOICE = "3DPhHWXDY263XJ1d2EPN"
 DEFAULT_MODEL = "eleven_multilingual_v2"
 
-# Layout video 9:16
+# ====== BRAND ======
+BRAND_BLU = (16, 63, 101)        # #103f65
+BRAND_BLU_SCURO = (8, 30, 50)    # versione più scura per gradient
+BRAND_ORO = (173, 152, 83)       # #ad9853
+TESTO_SOTT_BIANCO = "ffffff"     # per sottotitoli
+TESTO_SOTT_BG = "ee0a1f30"       # background sottotitoli (semi-trasp blu scuro)
+
+# ====== FONT (committati nel repo) ======
+REPO_ROOT = Path(__file__).resolve().parent.parent
+FONT_TITOLO = REPO_ROOT / "assets/fonts/Pacifico-Regular.ttf"
+FONT_SOTT = REPO_ROOT / "assets/fonts/ComingSoon-Regular.ttf"
+LOGO_PATH = REPO_ROOT / "assets/branding/logo.png"
+
+# ====== LAYOUT VIDEO 9:16 ======
 W, H = 1080, 1920
 IMG_TOP = 0
 IMG_SIZE = 1080
-TITLE_AREA = (1080, 1240)
-SUBS_AREA = (1240, 1820)
-WATERMARK_AREA = (1820, 1920)
-
-FONT_BOLD = "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf"
-FONT_REG = "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf"
+TITLE_AREA = (1080, 1240)          # 160 px area titolo
+SUBS_AREA = (1240, 1800)           # 560 px area sottotitoli
+FOOTER_AREA = (1800, 1920)         # 120 px area logo + testo brand
 
 
 def slugify(s):
@@ -69,7 +84,6 @@ def genera_audio_e_timestamps(testo, voice_id, api_key, out_mp3):
 
 
 def char_to_word_timestamps(alignment):
-    """Aggrega timestamp di caratteri in parole intere."""
     chars = alignment["characters"]
     starts = alignment["character_start_times_seconds"]
     ends = alignment["character_end_times_seconds"]
@@ -83,7 +97,6 @@ def char_to_word_timestamps(alignment):
                 parole.append({"testo": "".join(buf), "start": p_start, "end": p_end})
                 buf = []
                 p_start = None
-            # Punteggiatura che chiude frase: estendi end della parola precedente
             if parole and c in ".!?":
                 parole[-1]["end"] = e
         else:
@@ -96,7 +109,7 @@ def char_to_word_timestamps(alignment):
     return parole
 
 
-def genera_srt(parole, out_srt, max_parole=6, max_chars=42):
+def genera_srt(parole, out_srt, max_parole=5, max_chars=38):
     chunks = []
     current = []
     cur_chars = 0
@@ -123,7 +136,6 @@ def genera_srt(parole, out_srt, max_parole=6, max_chars=42):
 
 
 def wrap_titolo(testo, draw, font, max_width):
-    """Spezza il titolo su 2 righe se non entra."""
     if draw.textbbox((0, 0), testo, font=font)[2] <= max_width:
         return [testo]
     parole = testo.split()
@@ -138,81 +150,119 @@ def wrap_titolo(testo, draw, font, max_width):
 
 
 def crea_sfondo(img_path, titolo, out_path):
-    # Gradiente notturno
+    """Crea PNG 1080x1920 con immagine quadrata in alto, titolo, footer brand."""
     bg = Image.new("RGB", (W, H))
     gd = ImageDraw.Draw(bg)
+
+    # Gradiente notturno brand: blu navy che scurisce verso il basso
     for y in range(H):
         t = y / H
-        r = int(26 - 18 * t)
-        g = int(26 - 20 * t)
-        b = int(46 - 26 * t)
+        r = int(BRAND_BLU[0] - (BRAND_BLU[0] - BRAND_BLU_SCURO[0]) * t)
+        g = int(BRAND_BLU[1] - (BRAND_BLU[1] - BRAND_BLU_SCURO[1]) * t)
+        b = int(BRAND_BLU[2] - (BRAND_BLU[2] - BRAND_BLU_SCURO[2]) * t)
         gd.line([(0, y), (W, y)], fill=(r, g, b))
 
-    # Immagine quadrata in alto (crop+resize per riempire 1080x1080)
+    # Qualche stellina nella zona sotto l'immagine (atmosfera notturna)
+    random.seed(7)
+    for _ in range(40):
+        x = random.randint(0, W)
+        y = random.randint(IMG_SIZE + 20, H - 40)
+        s = random.choice([1, 1, 2])
+        brightness = random.randint(160, 220)
+        gd.ellipse([x - s, y - s, x + s, y + s], fill=(brightness, brightness, brightness))
+
+    # Immagine quadrata in alto (crop + resize)
     img = Image.open(img_path).convert("RGB")
     s = min(img.size)
     left = (img.width - s) // 2
     top = (img.height - s) // 2
-    img = img.crop((left, top, left + s, top + s)).resize(
-        (IMG_SIZE, IMG_SIZE), Image.LANCZOS
-    )
+    img = img.crop((left, top, left + s, top + s)).resize((IMG_SIZE, IMG_SIZE), Image.LANCZOS)
     bg.paste(img, (0, IMG_TOP))
 
     draw = ImageDraw.Draw(bg)
 
-    # Titolo
-    font_size = 58
-    while font_size >= 40:
-        font_titolo = ImageFont.truetype(FONT_BOLD, font_size)
+    # Titolo in Pacifico oro
+    font_size = 76
+    while font_size >= 44:
+        font_titolo = ImageFont.truetype(str(FONT_TITOLO), font_size)
         righe = wrap_titolo(titolo, draw, font_titolo, W - 80)
         if len(righe) <= 2:
             break
         font_size -= 6
 
-    altezza_riga = font_size + 10
+    altezza_riga = int(font_size * 1.1)
     altezza_totale = altezza_riga * len(righe)
     y_start = TITLE_AREA[0] + (TITLE_AREA[1] - TITLE_AREA[0] - altezza_totale) // 2
     for i, riga in enumerate(righe):
         bbox = draw.textbbox((0, 0), riga, font=font_titolo)
         w_text = bbox[2] - bbox[0]
-        draw.text(
-            ((W - w_text) // 2, y_start + i * altezza_riga),
-            riga,
-            fill="#f4d35e",
-            font=font_titolo,
-        )
+        x = (W - w_text) // 2
+        y = y_start + i * altezza_riga
+        # piccolo glow/shadow scuro per leggibilita
+        for ox, oy in [(2, 2), (-2, 2), (2, -2), (-2, -2)]:
+            draw.text((x + ox, y + oy), riga, fill=(0, 0, 0), font=font_titolo)
+        draw.text((x, y), riga, fill=BRAND_ORO, font=font_titolo)
 
-    # Watermark
-    font_wm = ImageFont.truetype(FONT_REG, 28)
-    wm = "favoleperdormire.it"
-    bbox = draw.textbbox((0, 0), wm, font=font_wm)
-    w_text = bbox[2] - bbox[0]
-    draw.text(
-        ((W - w_text) // 2, WATERMARK_AREA[0] + 30),
-        wm,
-        fill="#9ba4b5",
-        font=font_wm,
-    )
+    # Footer: logo gufetto + testo brand
+    footer_y_centro = (FOOTER_AREA[0] + FOOTER_AREA[1]) // 2
+    has_logo = LOGO_PATH.exists()
+    if has_logo:
+        try:
+            logo = Image.open(LOGO_PATH).convert("RGBA")
+            # Ridimensiona logo a 90px altezza
+            logo_h = 90
+            logo_w = int(logo.width * (logo_h / logo.height))
+            logo = logo.resize((logo_w, logo_h), Image.LANCZOS)
+            # Composito sul background
+            font_wm = ImageFont.truetype(str(FONT_SOTT), 32)
+            wm = "favoleperdormire.it"
+            bbox = draw.textbbox((0, 0), wm, font=font_wm)
+            wm_w = bbox[2] - bbox[0]
+            gap = 25
+            total_w = logo_w + gap + wm_w
+            x_start = (W - total_w) // 2
+            bg.paste(logo, (x_start, footer_y_centro - logo_h // 2), logo)
+            draw = ImageDraw.Draw(bg)
+            draw.text(
+                (x_start + logo_w + gap, footer_y_centro - 18),
+                wm,
+                fill=BRAND_ORO,
+                font=font_wm,
+            )
+        except Exception as ex:
+            print(f"  ATTENZIONE: errore caricamento logo ({ex}), uso solo testo")
+            has_logo = False
+
+    if not has_logo:
+        font_wm = ImageFont.truetype(str(FONT_SOTT), 36)
+        wm = "favoleperdormire.it"
+        bbox = draw.textbbox((0, 0), wm, font=font_wm)
+        wm_w = bbox[2] - bbox[0]
+        draw.text(((W - wm_w) // 2, footer_y_centro - 20), wm, fill=BRAND_ORO, font=font_wm)
 
     bg.save(out_path, "PNG")
-    print(f"  Sfondo creato: {out_path.name}")
+    print(f"  Sfondo creato: {out_path.name} (logo {'incluso' if has_logo else 'mancante, solo testo'})")
 
 
-def crea_video(sfondo, mp3, srt, out_mp4):
+def crea_video(sfondo, mp3, srt, out_mp4, fonts_dir):
+    """FFmpeg: combina sfondo + audio + sottotitoli karaoke."""
     margin_v = H - SUBS_AREA[1] + 20
     style = (
-        "FontName=DejaVu Sans,FontSize=38,PrimaryColour=&Hffffff,"
-        "OutlineColour=&H000000,BackColour=&Hcc1a1a2e,"
-        "BorderStyle=4,Outline=2,Shadow=0,"
+        "FontName=Coming Soon,FontSize=48,"
+        f"PrimaryColour=&H{TESTO_SOTT_BIANCO},"
+        "OutlineColour=&H000000,"
+        f"BackColour=&H{TESTO_SOTT_BG},"
+        "BorderStyle=4,Outline=3,Shadow=0,"
         f"MarginV={margin_v},MarginL=60,MarginR=60,"
-        "Alignment=2,Spacing=0.5,Bold=1"
+        "Alignment=2,Spacing=0.3,Bold=1"
     )
+    vf = f"subtitles={srt}:fontsdir={fonts_dir}:force_style='{style}'"
     cmd = [
         "ffmpeg", "-y",
         "-loop", "1", "-framerate", "25",
         "-i", str(sfondo),
         "-i", str(mp3),
-        "-vf", f"subtitles={srt}:force_style='{style}'",
+        "-vf", vf,
         "-c:v", "libx264", "-preset", "fast", "-tune", "stillimage",
         "-c:a", "aac", "-b:a", "192k",
         "-pix_fmt", "yuv420p",
@@ -240,6 +290,11 @@ def main():
     if not api_key:
         sys.exit("ELEVENLABS_API_KEY non impostata.")
 
+    if not FONT_TITOLO.exists():
+        sys.exit(f"Font titolo mancante: {FONT_TITOLO}")
+    if not FONT_SOTT.exists():
+        sys.exit(f"Font sottotitoli mancante: {FONT_SOTT}")
+
     testo_path = Path(args.testo)
     img_path = Path(args.immagine)
     out_root = Path(args.out_dir)
@@ -250,15 +305,12 @@ def main():
         sys.exit(f"Immagine non trovata: {img_path}")
 
     raw = testo_path.read_text(encoding="utf-8").strip()
-
-    # Titolo: prima riga se corta, altrimenti dal nome file
     righe = [r.strip() for r in raw.split("\n") if r.strip()]
     if args.titolo:
         titolo = args.titolo
         testo = raw
     elif righe and len(righe[0]) < 60:
         titolo = righe[0]
-        # Rimuovi titolo + eventuale sottotitolo (seconda riga in italico/spiegazione)
         body_start = raw.find(righe[0]) + len(righe[0])
         testo = raw[body_start:].strip()
     else:
@@ -287,9 +339,8 @@ def main():
     print(f"  Parole estratte: {len(parole)}")
     genera_srt(parole, srt)
     crea_sfondo(img_path, titolo, sfondo)
-    crea_video(sfondo, mp3, srt, mp4)
+    crea_video(sfondo, mp3, srt, mp4, FONT_SOTT.parent)
 
-    # Cleanup file intermedi
     for f in tmp_dir.iterdir():
         f.unlink()
     tmp_dir.rmdir()
