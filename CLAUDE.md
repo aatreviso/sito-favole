@@ -170,3 +170,120 @@ Cloudflare Free può eventualmente essere utile davanti a SupportHost come CDN p
 ## 📝 Cronologia decisioni strategiche
 
 - **15 maggio 2026**: prima sessione di strategia con utente. Definita roadmap 3 fasi. Confermato target ADULTI (no Families Policy). Confermato che riusiamo account Play Console + AdMob di Conquizzone. Confermato idea audio TTS generato una volta sola + video YouTube derivati. Subscription approvata in linea di principio, decisione finale rimandata post-lancio app. Memoria progetto creata.
+
+- **18 maggio 2026**: prima sessione operativa Fase 3. Pipeline audio + video funzionante in produzione via GitHub Actions. Test reale completato su favola "La gatta Sofia". Dettagli sotto.
+
+## 🎙️ Pipeline audio + video — STATO: FUNZIONANTE (18 maggio 2026)
+
+Costruita e testata via GitHub Actions. Tutto pushato su `main`.
+
+### Stack tecnico effettivo
+- **TTS**: ElevenLabs API, modello `eleven_multilingual_v2`
+- **Pricing**: PAYG ($0.10 / 1.000 caratteri Multilingual v2). Stima totale catalogo 75 favole: **~$27 una tantum** (~€25). Una favola media (2.000 char) costa ~$0.20.
+- **API key**: configurata come GitHub Secret `ELEVENLABS_API_KEY` nel repo `aatreviso/sito-favole`.
+- **Voice ID scelto dall'utente**: `3DPhHWXDY263XJ1d2EPN` (provvisorio, ne sta cercando altre alternative migliori — TODO sotto).
+- **Voice settings finali** (dopo iterazioni):
+  - `stability`: 0.40 (espressiva)
+  - `similarity_boost`: 0.75
+  - `style`: 0.45 (gioiosa, caratterizzata)
+  - `speed`: 0.92 (8% più lenta della normale)
+  - `use_speaker_boost`: true
+- **Post-processing audio**: pitch shift -0.5 semitoni via ffmpeg (`asetrate + atempo`). Mantiene durata, riduce "roca".
+- **Pause naturali**: tag SSML `<break time="0.6s"/>` pre-titolo, `<break time="1.0s"/>` post-titolo, `<break time="0.35s"/>` dopo ogni `. ! ?` nel testo storia, `<break time="1.0s"/>` finale.
+
+### Struttura cartelle nel repo
+```
+sito-favole/
+├── testi/                 # input: testo favola (slug.txt)
+├── immagini/              # input: illustrazione quadrata (slug.png o .jpg)
+├── audio/                 # output: MP3 narrazione (slug.mp3) + timestamps (slug.json)
+├── video/                 # output: MP4 1080x1920 reel (slug.mp4)
+├── assets/
+│   ├── branding/          # logo.png (gufetto trasparente)
+│   └── fonts/             # Pacifico-Regular.ttf, ComingSoon-Regular.ttf
+├── tools/
+│   └── genera_video.py    # script Python pipeline completa
+└── .github/workflows/
+    └── genera-video.yml   # workflow GitHub Actions
+```
+
+### Come lanciare un nuovo video
+1. Caricare `testi/<slug>.txt` (testo favola) e `immagini/<slug>.png` (quadrata)
+2. Andare su https://github.com/aatreviso/sito-favole/actions/workflows/genera-video.yml
+3. "Run workflow" → input:
+   - `favola`: slug del file (es. `la-gatta-sofia`)
+   - `voice_id`: opzionale, default è `3DPhHWXDY263XJ1d2EPN`
+   - `rigenera_audio`: checkbox. **False = cache** (riusa audio se presente, gratis). **True = rigenera** da API (costa crediti).
+4. In ~3 minuti gli output sono committati su `main` e disponibili in `audio/` e `video/`.
+
+### Layout video (9:16, 1080x1920)
+- **Titolo in alto** (y=30-250): font Pacifico oro #ad9853, fino a 84px, shadow nera
+- **Immagine quadrata** (y=290-1170, centrata orizzontalmente): 880x880 con angoli arrotondati 60px, ombra morbida dietro
+- **Sottotitoli karaoke** (y=1210-1730): font Coming Soon bianco 84px, outline navy 5px, sincronizzati al millisecondo via ElevenLabs character timestamps. Rispettano confini di frase (chunk forzato dopo ogni `. ! ?`).
+- **Footer** (y=1740-1920): logo gufetto 160px + "favoleperdormire.it" in oro
+- **Sfondo**: gradiente notturno brand `#103f65 → #081e32` con stelline nelle zone libere
+
+### Sistema cache audio (importante per non spendere crediti)
+Lo script ha 3 modalità in ordine di preferenza:
+1. **Cache completa**: se `audio/<slug>.mp3` + `audio/<slug>.json` (timestamps) esistono e `rigenera_audio=false` → riusa entrambi, sub karaoke perfetto, **ZERO API call**
+2. **Cache parziale**: se solo `audio/<slug>.mp3` esiste (no JSON) → riusa audio, sub distribuiti uniformemente sulla durata reale, **ZERO API call**. Leggermente meno preciso sui timing ma costo zero.
+3. **Fresh**: nessun file presente o `rigenera_audio=true` → chiamata ElevenLabs + salva tutto
+
+### Pause naturali nella narrazione
+Lo script inserisce automaticamente `<break time="0.35s"/>` dopo ogni `. ! ?` nel testo. Il parser ignora i tag SSML nei character timestamps (bug "<break time= 1>" trapelava nei sottotitoli, risolto).
+
+## 🆔 ID e credenziali aggiornati al 18 maggio 2026
+
+- [x] **ElevenLabs API key**: salvata come GitHub Secret `ELEVENLABS_API_KEY` nel repo. ⚠️ L'utente è stato avvisato di rigenerarla dato che era stata condivisa in chat per il setup iniziale.
+- [x] **ElevenLabs voice ID**: `3DPhHWXDY263XJ1d2EPN` (provvisorio, utente sta cercando alternative migliori)
+- [x] **Logo gufetto**: caricato in `assets/branding/logo.png` (PNG trasparente)
+- [x] **Font branding**: Pacifico-Regular.ttf + ComingSoon-Regular.ttf in `assets/fonts/` (Google Fonts gratuiti, già nel repo)
+- [x] **Colori brand**: blu navy `#103f65`, oro `#ad9853` (forniti dall'utente)
+- [ ] AdMob App ID per Favole: DA CREARE (dentro account `ca-app-pub-1355648809209212`)
+- [ ] AdMob Banner / Interstitial / Rewarded ad unit ID: DA CREARE
+- [ ] Keystore Android upload key: DA CREARE (`favoleperdormire-upload.jks`, salvarne SHA-1 in questo file)
+
+## 📋 TODO prossime sessioni (in ordine di priorità, aggiornato 18 maggio 2026)
+
+### Prossima sessione immediata
+1. **Voce alternativa ElevenLabs** (utente sta valutando): provare 2-3 voci candidate, generare lo stesso audio "La gatta Sofia" per A/B test sentito. Quando trovata, aggiornare `DEFAULT_VOICE` in `tools/genera_video.py`.
+2. **Batch generazione del catalogo intero** (~75 favole):
+   - Estrarre singole favole dai 5 ODT/DOCX (`/root/.claude/uploads/045d8f45-...`) → file `testi/<slug>.txt` uno per favola
+   - Generare/raccogliere immagine quadrata per ogni favola → `immagini/<slug>.jpg`
+   - Lanciare workflow per ognuna (o crearne uno "batch" che gira tutte in sequenza). Costo stimato: ~$25 una tantum totale.
+   - Upload risultati su SupportHost via SFTP per servirli dal sito
+
+### Fase 1 — Sito web (ROI immediato, ancora da fare)
+- [ ] Iscrizione Ezoic + integrazione (decidere se via DNS o via plugin WP)
+- [ ] Configurazione audience "adulti" in Ezoic
+- [ ] Cattura screenshot/log dell'attuale configurazione EvolutionGroup prima di toglierli (per confronto)
+- [ ] Disattivare EvolutionGroup
+- [ ] Misurare per 14 giorni, confrontare eCPM
+- [ ] Embeddare i video generati nelle pagine WordPress sotto il testo della favola
+
+### Fase 2 — App Capacitor (dopo audio/video pronto)
+- [ ] Setup Capacitor base + WebView verso favoleperdormire.it
+- [ ] Plugin TTS + bridge JS
+- [ ] Plugin preferiti offline
+- [ ] Plugin AdMob (riusare pattern Conquizzone)
+- [ ] Generazione keystore + assets store listing
+- [ ] Upload internal testing Play Console
+
+### Fase 3.5 — YouTube + Podcast (dopo batch generazione)
+- [ ] Setup canale YouTube "Favole per Dormire" + API credentials
+- [ ] Script di upload automatico dei MP4 a YouTube
+- [ ] Setup feed RSS podcast → Spotify/Apple Podcasts
+
+## 🔧 File chiave del repo (per future sessioni)
+
+| File | Cosa fa |
+|---|---|
+| `tools/genera_video.py` | Pipeline completa: ElevenLabs → MP3 + timestamps → pitch shift → ASS sottotitoli → FFmpeg video MP4 |
+| `.github/workflows/genera-video.yml` | Trigger manuale (workflow_dispatch) con input favola/voice/rigenera_audio |
+| `testi/la-gatta-sofia.txt` | Testo di test usato durante setup pipeline |
+| `immagini/la-gatta-sofia.jpg` | Immagine di test usata durante setup pipeline |
+| `assets/branding/logo.png` | Logo Mr. Gufetto |
+| `assets/fonts/Pacifico-Regular.ttf` | Font titolo |
+| `assets/fonts/ComingSoon-Regular.ttf` | Font sottotitoli |
+| `audio/la-gatta-sofia.mp3` | Output di esempio (modalità podcast) |
+| `video/la-gatta-sofia.mp4` | Output di esempio (reel 9:16) |
