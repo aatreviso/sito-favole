@@ -1,0 +1,90 @@
+name: Genera video favola
+
+on:
+  workflow_dispatch:
+    inputs:
+      favola:
+        description: "Slug della favola (deve esistere testi/<slug>.txt + immagini/<slug>.png)"
+        required: true
+        default: "la-gatta-sofia"
+      voice_id:
+        description: "Voice ID ElevenLabs (lascia vuoto per default)"
+        required: false
+        default: ""
+
+jobs:
+  genera:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+
+    steps:
+      - name: Checkout repo
+        uses: actions/checkout@v4
+
+      - name: Setup Python 3.11
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Installa FFmpeg + font
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq ffmpeg fonts-dejavu
+
+      - name: Installa dipendenze Python
+        run: pip install --quiet requests pillow
+
+      - name: Verifica file di input
+        run: |
+          if [ ! -f "testi/${{ inputs.favola }}.txt" ]; then
+            echo "::error::Manca testi/${{ inputs.favola }}.txt"
+            exit 1
+          fi
+          if [ ! -f "immagini/${{ inputs.favola }}.png" ] && [ ! -f "immagini/${{ inputs.favola }}.jpg" ]; then
+            echo "::error::Manca immagini/${{ inputs.favola }}.png (o .jpg)"
+            exit 1
+          fi
+
+      - name: Trova immagine
+        id: img
+        run: |
+          if [ -f "immagini/${{ inputs.favola }}.png" ]; then
+            echo "path=immagini/${{ inputs.favola }}.png" >> $GITHUB_OUTPUT
+          else
+            echo "path=immagini/${{ inputs.favola }}.jpg" >> $GITHUB_OUTPUT
+          fi
+
+      - name: Genera audio + video
+        env:
+          ELEVENLABS_API_KEY: ${{ secrets.ELEVENLABS_API_KEY }}
+        run: |
+          VOICE_ARG=""
+          if [ -n "${{ inputs.voice_id }}" ]; then
+            VOICE_ARG="--voice-id ${{ inputs.voice_id }}"
+          fi
+          python3 tools/genera_video.py \
+            --testo "testi/${{ inputs.favola }}.txt" \
+            --immagine "${{ steps.img.outputs.path }}" \
+            $VOICE_ARG
+
+      - name: Commit e push outputs nel repo
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add audio/ video/
+          if git diff --cached --quiet; then
+            echo "Nessun file nuovo da committare"
+          else
+            git commit -m "Genera audio + video: ${{ inputs.favola }}"
+            git push
+          fi
+
+      - name: Upload artifact (download diretto da GitHub Actions, scade 30gg)
+        uses: actions/upload-artifact@v4
+        with:
+          name: favola-${{ inputs.favola }}
+          path: |
+            audio/${{ inputs.favola }}.mp3
+            video/${{ inputs.favola }}.mp4
+          retention-days: 30
