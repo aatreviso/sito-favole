@@ -136,20 +136,35 @@ def parole_da_testo_uniformi(testo, durata_sec, offset_inizio=1.6):
     Fallback quando i timestamps esatti non ci sono: distribuisce le parole
     uniformemente nell'audio. offset_inizio compensa le pause iniziali
     (0.6s pre-titolo + 1s post-titolo = 1.6s prima della storia).
+    Marca fine_frase=True sulle parole che terminano con . ! ?
     """
-    parole_raw = [p.strip('.,!?;:"“”') for p in testo.split()]
-    parole_raw = [p for p in parole_raw if p]
-    n = len(parole_raw)
+    parole_raw = testo.split()
+    parole_valide = []
+    for w in parole_raw:
+        w_strip = w.strip('"“”«»()[]')
+        if w_strip and not all(c in '.,!?;:-—' for c in w_strip):
+            parole_valide.append(w_strip)
+
+    n = len(parole_valide)
     dur_disponibile = max(durata_sec - offset_inizio - 1.0, durata_sec * 0.7)
     dur_parola = dur_disponibile / max(n, 1)
-    return [
-        {
-            "testo": p,
+
+    result = []
+    for i, w in enumerate(parole_valide):
+        end_check = w.rstrip('"“”»)')
+        fine_frase = bool(end_check) and end_check[-1] in '.!?'
+        testo_display = re.sub(r'[,;:"“”«»()]+', '', w)
+        if not fine_frase:
+            testo_display = testo_display.rstrip('.!?')
+        if not testo_display:
+            continue
+        result.append({
+            "testo": testo_display,
             "start": offset_inizio + i * dur_parola,
             "end": offset_inizio + (i + 1) * dur_parola - 0.05,
-        }
-        for i, p in enumerate(parole_raw)
-    ]
+            "fine_frase": fine_frase,
+        })
+    return result
 
 
 def pitch_shift_audio(mp3_in, mp3_out, pitch_factor=PITCH_FACTOR):
@@ -187,7 +202,7 @@ def char_to_word_timestamps(alignment):
         if c == "<":
             in_tag = True
             if buf:
-                parole.append({"testo": "".join(buf), "start": p_start, "end": p_end})
+                parole.append({"testo": "".join(buf), "start": p_start, "end": p_end, "fine_frase": False})
                 buf = []
                 p_start = None
             continue
@@ -198,27 +213,34 @@ def char_to_word_timestamps(alignment):
             continue
         if c.isspace() or c in '.,!?;:"“”()[]…':
             if buf:
-                parole.append({"testo": "".join(buf), "start": p_start, "end": p_end})
+                parole.append({"testo": "".join(buf), "start": p_start, "end": p_end, "fine_frase": False})
                 buf = []
                 p_start = None
+            # Se . ! ?, marca l'ultima parola come fine frase e accodale il punto
             if parole and c in ".!?":
                 parole[-1]["end"] = e
+                parole[-1]["fine_frase"] = True
+                parole[-1]["testo"] += c
         else:
             if p_start is None:
                 p_start = s
             buf.append(c)
             p_end = e
     if buf:
-        parole.append({"testo": "".join(buf), "start": p_start, "end": p_end})
+        parole.append({"testo": "".join(buf), "start": p_start, "end": p_end, "fine_frase": False})
     return parole
 
 
 def genera_ass(parole, out_ass, max_parole=SUBS_MAX_PAROLE, max_chars=SUBS_MAX_CHARS):
-    """Genera file ASS con PlayRes esplicito = pixel video reali."""
+    """
+    Genera file ASS con PlayRes esplicito = pixel video reali.
+    Chunking: rispetta i confini di frase (. ! ?), poi max_parole e max_chars.
+    """
     chunks = []
     current = []
     cur_chars = 0
     for p in parole:
+        # Verifica se chiudere il chunk corrente per limiti
         if current and (
             len(current) >= max_parole or cur_chars + len(p["testo"]) > max_chars
         ):
@@ -227,6 +249,11 @@ def genera_ass(parole, out_ass, max_parole=SUBS_MAX_PAROLE, max_chars=SUBS_MAX_C
             cur_chars = 0
         current.append(p)
         cur_chars += len(p["testo"]) + 1
+        # Forza chiusura chunk dopo fine frase (. ! ?)
+        if p.get("fine_frase"):
+            chunks.append(current)
+            current = []
+            cur_chars = 0
     if current:
         chunks.append(current)
 
