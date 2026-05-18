@@ -16,6 +16,7 @@ Sottotitoli renderizzati via formato ASS con PlayResY=1920 esplicito
 """
 import argparse
 import base64
+import json
 import os
 import random
 import re
@@ -118,6 +119,37 @@ def genera_audio_e_timestamps(testo, voice_id, api_key, out_mp3):
     out_mp3.write_bytes(audio_bytes)
     print(f"  MP3 raw salvato: {out_mp3.name} ({len(audio_bytes)/1024:.0f} KB)")
     return data["alignment"]
+
+
+def durata_audio(mp3_path):
+    """Ritorna la durata in secondi del file MP3 via ffprobe."""
+    r = subprocess.run(
+        ["ffprobe", "-v", "error", "-show_entries", "format=duration",
+         "-of", "csv=p=0", str(mp3_path)],
+        capture_output=True, text=True
+    )
+    return float(r.stdout.strip())
+
+
+def parole_da_testo_uniformi(testo, durata_sec, offset_inizio=1.6):
+    """
+    Fallback quando i timestamps esatti non ci sono: distribuisce le parole
+    uniformemente nell'audio. offset_inizio compensa le pause iniziali
+    (0.6s pre-titolo + 1s post-titolo = 1.6s prima della storia).
+    """
+    parole_raw = [p.strip('.,!?;:"“”') for p in testo.split()]
+    parole_raw = [p for p in parole_raw if p]
+    n = len(parole_raw)
+    dur_disponibile = max(durata_sec - offset_inizio - 1.0, durata_sec * 0.7)
+    dur_parola = dur_disponibile / max(n, 1)
+    return [
+        {
+            "testo": p,
+            "start": offset_inizio + i * dur_parola,
+            "end": offset_inizio + (i + 1) * dur_parola - 0.05,
+        }
+        for i, p in enumerate(parole_raw)
+    ]
 
 
 def pitch_shift_audio(mp3_in, mp3_out, pitch_factor=PITCH_FACTOR):
@@ -392,6 +424,8 @@ def main():
     p.add_argument("--voice-id", default=DEFAULT_VOICE)
     p.add_argument("--out-dir", default=".")
     p.add_argument("--api-key", default=None)
+    p.add_argument("--force-audio", action="store_true",
+                   help="Rigenera l'audio anche se gia' presente (costa crediti)")
     args = p.parse_args()
 
     api_key = args.api_key or os.environ.get("ELEVENLABS_API_KEY")
@@ -439,30 +473,49 @@ def main():
 
     mp3_raw = tmp_dir / f"{slug}-raw.mp3"
     mp3 = audio_dir / f"{slug}.mp3"
+    alignment_file = audio_dir / f"{slug}.json"
     ass = tmp_dir / f"{slug}.ass"
     sfondo = tmp_dir / f"{slug}-sfondo.png"
     mp4 = video_dir / f"{slug}.mp4"
 
-    # Aggiungi pause dopo ogni . ! ? nel testo storia
-    testo_con_pause = aggiungi_pause_narrative(testo)
-
-    # Struttura: [pausa] titolo [pausa lunga] storia [pausa finale]
-    testo_per_api = (
-        f'<break time="0.6s"/> {titolo}. '
-        f'<break time="1.0s"/> {testo_con_pause} '
-        f'<break time="1.0s"/>'
-    )
     parole_titolo = len(titolo.split())
-    n_pause_extra = testo_con_pause.count("<break")
-    print(f"  Struttura: pausa -> '{titolo}' ({parole_titolo} parole) -> pausa -> storia ({n_pause_extra} pause extra)")
 
-    alignment = genera_audio_e_timestamps(testo_per_api, args.voice_id, api_key, mp3_raw)
-    parole_tutte = char_to_word_timestamps(alignment)
-    parole_storia = parole_tutte[parole_titolo:]
-    print(f"  Parole totali: {len(parole_tutte)} (titolo {parole_titolo}, storia {len(parole_storia)})")
+    # Strategia cache:
+    # 1) Se --force-audio: rigenera tutto (chiamata API + pitch shift)
+    # 2) Se mp3 + json esistono: riusa entrambi, niente API, sub karaoke perfetto
+    # 3) Se solo mp3 esiste: riusa audio + sub uniformi su durata reale (no API)
+    # 4) Altrimenti: chiamata API + salva tutto
+
+    if not args.force_audio and mp3.exists() and alignment_file.exists():
+        print(f"  Riuso audio + timestamps esatti: {mp3.name} (no API)")
+        alignment = json.loads(alignment_file.read_text(encoding="utf-8"))
+        parole_tutte = char_to_word_timestamps(alignment)
+        parole_storia = parole_tutte[parole_titolo:]
+    elif not args.force_audio and mp3.exists():
+        dur = durata_audio(mp3)
+        print(f"  Riuso audio {mp3.name} (durata {dur:.1f}s), sub distribuiti uniformemente (no API, no JSON)")
+        parole_storia = parole_da_testo_uniformi(testo, dur)
+    else:
+        # Aggiungi pause dopo ogni . ! ? nel testo storia
+        testo_con_pause = aggiungi_pause_narrative(testo)
+        testo_per_api = (
+            f'<break time="0.6s"/> {titolo}. '
+            f'<break time="1.0s"/> {testo_con_pause} '
+            f'<break time="1.0s"/>'
+        )
+        n_pause_extra = testo_con_pause.count("<break")
+        print(f"  Struttura: pausa -> '{titolo}' ({parole_titolo} parole) -> pausa -> storia ({n_pause_extra} pause extra)")
+
+        alignment = genera_audio_e_timestamps(testo_per_api, args.voice_id, api_key, mp3_raw)
+        alignment_file.write_text(json.dumps(alignment), encoding="utf-8")
+        print(f"  Timestamps salvati: {alignment_file.name}")
+        pitch_shift_audio(mp3_raw, mp3)
+        parole_tutte = char_to_word_timestamps(alignment)
+        parole_storia = parole_tutte[parole_titolo:]
+
+    print(f"  Parole sub: {len(parole_storia)}")
 
     genera_ass(parole_storia, ass)
-    pitch_shift_audio(mp3_raw, mp3)
     crea_sfondo(img_path, titolo, sfondo)
     crea_video(sfondo, mp3, ass, mp4, FONT_SOTT.parent)
 

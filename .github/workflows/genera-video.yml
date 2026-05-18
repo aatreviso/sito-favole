@@ -11,6 +11,11 @@ on:
         description: "Voice ID ElevenLabs (lascia vuoto per default)"
         required: false
         default: ""
+      rigenera_audio:
+        description: "Rigenera l'audio anche se presente (costa crediti ElevenLabs)"
+        type: boolean
+        required: false
+        default: false
 
 jobs:
   genera:
@@ -65,10 +70,14 @@ jobs:
           if [ -n "${{ inputs.voice_id }}" ]; then
             VOICE_ARG="--voice-id ${{ inputs.voice_id }}"
           fi
+          FORCE_ARG=""
+          if [ "${{ inputs.rigenera_audio }}" = "true" ]; then
+            FORCE_ARG="--force-audio"
+          fi
           python3 tools/genera_video.py \
             --testo "testi/${{ inputs.favola }}.txt" \
             --immagine "${{ steps.img.outputs.path }}" \
-            $VOICE_ARG
+            $VOICE_ARG $FORCE_ARG
 
       - name: Commit e push outputs nel repo
         run: |
@@ -78,7 +87,7 @@ jobs:
           if git diff --cached --quiet; then
             echo "Nessun file nuovo da committare"
           else
-            git commit -m "Genera audio + video: ${{ inputs.favola }}"
+            git commit -m "Genera video: ${{ inputs.favola }}"
             git push
           fi
 
