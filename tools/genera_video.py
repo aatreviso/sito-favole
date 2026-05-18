@@ -11,10 +11,11 @@ Output:
 
 Branding: font Pacifico per il titolo, Coming Soon per i sottotitoli,
 palette blu navy #103f65 + oro #ad9853, logo gufetto in basso.
+Sottotitoli renderizzati via formato ASS con PlayResY=1920 esplicito
+(coordinate in pixel veri, niente scaling imprevedibile di libass).
 """
 import argparse
 import base64
-import math
 import os
 import random
 import re
@@ -23,18 +24,16 @@ import sys
 from pathlib import Path
 
 import requests
-from PIL import Image, ImageDraw, ImageFont
+from PIL import Image, ImageDraw, ImageFont, ImageFilter
 
 ELEVENLABS_API = "https://api.elevenlabs.io/v1/text-to-speech/{voice_id}/with-timestamps"
 DEFAULT_VOICE = "3DPhHWXDY263XJ1d2EPN"
 DEFAULT_MODEL = "eleven_multilingual_v2"
 
 # ====== BRAND ======
-BRAND_BLU = (16, 63, 101)        # #103f65
-BRAND_BLU_SCURO = (8, 30, 50)    # versione più scura per gradient
-BRAND_ORO = (173, 152, 83)       # #ad9853
-TESTO_SOTT_BIANCO = "ffffff"     # per sottotitoli
-TESTO_SOTT_BG = "ee0a1f30"       # background sottotitoli (semi-trasp blu scuro)
+BRAND_BLU = (16, 63, 101)          # #103f65
+BRAND_BLU_SCURO = (8, 30, 50)
+BRAND_ORO = (173, 152, 83)         # #ad9853
 
 # ====== FONT (committati nel repo) ======
 REPO_ROOT = Path(__file__).resolve().parent.parent
@@ -42,21 +41,32 @@ FONT_TITOLO = REPO_ROOT / "assets/fonts/Pacifico-Regular.ttf"
 FONT_SOTT = REPO_ROOT / "assets/fonts/ComingSoon-Regular.ttf"
 LOGO_PATH = REPO_ROOT / "assets/branding/logo.png"
 
-# ====== LAYOUT VIDEO 9:16 ======
+# ====== LAYOUT VIDEO 9:16 (in pixel) ======
 W, H = 1080, 1920
-TITLE_AREA = (0, 200)              # 200 px titolo in alto
-IMG_TOP = 200                       # immagine quadrata sotto il titolo
-IMG_SIZE = 1080                     # da y=200 a y=1280
-SUBS_AREA = (1280, 1740)            # 460 px area sottotitoli sotto l'immagine
-FOOTER_AREA = (1740, 1920)          # 180 px footer logo + brand
+TITLE_AREA = (40, 280)             # 240 px titolo in alto (con padding)
+IMG_TOP = 320                       # immagine sotto il titolo, con aria
+IMG_SIZE = 880                      # immagine 880x880 (era 1080)
+IMG_LEFT = (W - IMG_SIZE) // 2     # centrata
+IMG_CORNER_RADIUS = 60             # angoli arrotondati
+SUBS_AREA = (1240, 1740)            # 500 px area sottotitoli
+FOOTER_AREA = (1740, 1920)          # 180 px footer
 
-# ====== VOCE (settaggi narrazione favole) ======
-VOICE_SPEED = 0.92                  # 1.0=normale, 0.7-1.2 range. 0.92=8% piu lento
-VOICE_STABILITY = 0.65              # piu alto = piu calma/consistente
+# ====== VOCE ======
+VOICE_SPEED = 0.92                  # 0.92 = 8% piu lento
+VOICE_STABILITY = 0.40              # piu basso = piu espressiva/variata
 VOICE_SIMILARITY = 0.75
-VOICE_STYLE = 0.05
-# Pitch shift FFmpeg per voce piu profonda (-1.5 semitoni, durata invariata)
-PITCH_FACTOR = 0.917                # <1.0 = piu grave
+VOICE_STYLE = 0.45                  # piu alto = piu gioiosa/caratterizzata
+# Pitch shift FFmpeg lieve (-0.5 semitoni), per rendere meno roca
+PITCH_FACTOR = 0.97                 # <1.0 = piu grave. 0.97 = -0.5 semitoni
+PAUSA_FRASE_SEC = 0.35              # pausa dopo ogni . ! ?
+
+# ====== SOTTOTITOLI (ASS style in pixel veri) ======
+SUBS_FONTSIZE = 72                  # in pixel (PlayResY=1920)
+SUBS_OUTLINE = 4
+SUBS_MAX_PAROLE = 4
+SUBS_MAX_CHARS = 28
+SUBS_MARGIN_L = 60
+SUBS_MARGIN_R = 60
 
 
 def slugify(s):
@@ -65,11 +75,21 @@ def slugify(s):
     return s.strip("-")
 
 
-def fmt_srt_time(s):
-    h, rem = divmod(int(s), 3600)
-    m, sec = divmod(rem, 60)
-    ms = int((s - int(s)) * 1000)
-    return f"{h:02d}:{m:02d}:{sec:02d},{ms:03d}"
+def fmt_ass_time(s):
+    """ASS time format: H:MM:SS.cs (centiseconds)."""
+    h = int(s // 3600)
+    m = int((s % 3600) // 60)
+    sec = s % 60
+    return f"{h}:{m:02d}:{sec:05.2f}"
+
+
+def aggiungi_pause_narrative(testo, pausa_sec=PAUSA_FRASE_SEC):
+    """Inserisce <break time="X"/> dopo ogni punto/exclamativo/interrogativo."""
+    return re.sub(
+        r'([.!?])(\s+)(?=[A-ZÀÈÉÌÒÙ"“])',
+        rf'\1 <break time="{pausa_sec}s"/>\2',
+        testo,
+    )
 
 
 def genera_audio_e_timestamps(testo, voice_id, api_key, out_mp3):
@@ -87,7 +107,7 @@ def genera_audio_e_timestamps(testo, voice_id, api_key, out_mp3):
             "speed": VOICE_SPEED,
         },
     }
-    print(f"  Chiamata ElevenLabs ({len(testo)} caratteri, speed={VOICE_SPEED})...")
+    print(f"  Chiamata ElevenLabs ({len(testo)} caratteri, speed={VOICE_SPEED}, style={VOICE_STYLE})...")
     r = requests.post(url, headers=headers, json=body, timeout=180)
     if r.status_code != 200:
         sys.exit(f"  Errore ElevenLabs {r.status_code}: {r.text[:300]}")
@@ -100,6 +120,12 @@ def genera_audio_e_timestamps(testo, voice_id, api_key, out_mp3):
 
 def pitch_shift_audio(mp3_in, mp3_out, pitch_factor=PITCH_FACTOR):
     """Abbassa il pitch dell'audio mantenendo durata invariata."""
+    if abs(pitch_factor - 1.0) < 0.005:
+        # Niente shift: copia diretta
+        cmd = ["ffmpeg", "-y", "-i", str(mp3_in), "-c:a", "copy", str(mp3_out)]
+        subprocess.run(cmd, capture_output=True, text=True, check=True)
+        print(f"  Nessun pitch shift (factor=1.0)")
+        return
     tempo = 1.0 / pitch_factor
     cmd = [
         "ffmpeg", "-y", "-i", str(mp3_in),
@@ -110,7 +136,7 @@ def pitch_shift_audio(mp3_in, mp3_out, pitch_factor=PITCH_FACTOR):
     r = subprocess.run(cmd, capture_output=True, text=True)
     if r.returncode != 0:
         sys.exit(f"  Errore pitch shift:\n{r.stderr[-400:]}")
-    print(f"  Pitch shift applicato (-{(1-pitch_factor)*12:.1f} semitoni)")
+    print(f"  Pitch shift applicato ({(1-pitch_factor)*-12:.1f} semitoni)")
 
 
 def char_to_word_timestamps(alignment):
@@ -139,7 +165,8 @@ def char_to_word_timestamps(alignment):
     return parole
 
 
-def genera_srt(parole, out_srt, max_parole=4, max_chars=30):
+def genera_ass(parole, out_ass, max_parole=SUBS_MAX_PAROLE, max_chars=SUBS_MAX_CHARS):
+    """Genera file ASS con PlayRes esplicito = pixel video reali."""
     chunks = []
     current = []
     cur_chars = 0
@@ -155,14 +182,41 @@ def genera_srt(parole, out_srt, max_parole=4, max_chars=30):
     if current:
         chunks.append(current)
 
-    lines = []
-    for i, chunk in enumerate(chunks, 1):
+    # Posizione sottotitoli: centro orizzontale, MarginV in pixel dal basso
+    centro_subs = (SUBS_AREA[0] + SUBS_AREA[1]) // 2
+    margin_v_px = H - centro_subs
+
+    # Colori ASS: &HAABBGGRR (alpha 00 = opaco, FF = trasparente)
+    primary = "&H00FFFFFF"           # bianco opaco
+    outline_color = "&H00081428"     # blu navy scuro outline
+    back = "&H00000000"              # non usato (BorderStyle=1)
+
+    header = f"""[Script Info]
+ScriptType: v4.00+
+PlayResX: {W}
+PlayResY: {H}
+WrapStyle: 2
+ScaledBorderAndShadow: yes
+
+[V4+ Styles]
+Format: Name, Fontname, Fontsize, PrimaryColour, SecondaryColour, OutlineColour, BackColour, Bold, Italic, Underline, StrikeOut, ScaleX, ScaleY, Spacing, Angle, BorderStyle, Outline, Shadow, Alignment, MarginL, MarginR, MarginV, Encoding
+Style: Default,Coming Soon,{SUBS_FONTSIZE},{primary},&H000000FF,{outline_color},{back},0,0,0,0,100,100,0,0,1,{SUBS_OUTLINE},2,2,{SUBS_MARGIN_L},{SUBS_MARGIN_R},{margin_v_px},1
+
+[Events]
+Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
+"""
+
+    events = []
+    for chunk in chunks:
         start = chunk[0]["start"]
         end = chunk[-1]["end"]
         text = " ".join(p["testo"] for p in chunk)
-        lines.append(f"{i}\n{fmt_srt_time(start)} --> {fmt_srt_time(end)}\n{text}\n")
-    out_srt.write_text("\n".join(lines), encoding="utf-8")
-    print(f"  SRT generato: {out_srt.name} ({len(chunks)} sottotitoli)")
+        events.append(
+            f"Dialogue: 0,{fmt_ass_time(start)},{fmt_ass_time(end)},Default,,0,0,0,,{text}"
+        )
+
+    out_ass.write_text(header + "\n".join(events) + "\n", encoding="utf-8")
+    print(f"  ASS generato: {out_ass.name} ({len(chunks)} sottotitoli, font {SUBS_FONTSIZE}px)")
 
 
 def wrap_titolo(testo, draw, font, max_width):
@@ -179,12 +233,23 @@ def wrap_titolo(testo, draw, font, max_width):
     return [" ".join(riga1), " ".join(riga2)] if riga2 else [" ".join(riga1)]
 
 
+def arrotonda_angoli(img, radius):
+    """Ritorna l'immagine con angoli arrotondati (RGBA)."""
+    mask = Image.new("L", img.size, 0)
+    md = ImageDraw.Draw(mask)
+    md.rounded_rectangle((0, 0, img.size[0], img.size[1]), radius=radius, fill=255)
+    out = Image.new("RGBA", img.size, (0, 0, 0, 0))
+    out.paste(img.convert("RGBA"), (0, 0))
+    out.putalpha(mask)
+    return out
+
+
 def crea_sfondo(img_path, titolo, out_path):
-    """Crea PNG 1080x1920 con titolo in alto, immagine al centro, footer in basso."""
+    """Crea PNG 1080x1920 con titolo in alto, immagine arrotondata, footer."""
     bg = Image.new("RGB", (W, H))
     gd = ImageDraw.Draw(bg)
 
-    # Gradiente notturno brand: blu navy che scurisce verso il basso
+    # Gradiente notturno brand
     for y in range(H):
         t = y / H
         r = int(BRAND_BLU[0] - (BRAND_BLU[0] - BRAND_BLU_SCURO[0]) * t)
@@ -192,23 +257,23 @@ def crea_sfondo(img_path, titolo, out_path):
         b = int(BRAND_BLU[2] - (BRAND_BLU[2] - BRAND_BLU_SCURO[2]) * t)
         gd.line([(0, y), (W, y)], fill=(r, g, b))
 
-    # Stelline nelle zone vuote (sopra il titolo e sotto l'immagine)
+    # Stelline nella zona sotto l'immagine (atmosfera notturna)
     random.seed(7)
-    for _ in range(60):
+    stars_top = IMG_TOP + IMG_SIZE + 30
+    for _ in range(70):
         x = random.randint(0, W)
-        # Zona sotto l'immagine (sottotitoli + footer)
-        y = random.randint(IMG_TOP + IMG_SIZE + 10, H - 30)
+        y = random.randint(stars_top, H - 30)
         s = random.choice([1, 1, 2])
-        brightness = random.randint(140, 200)
+        brightness = random.randint(140, 210)
         gd.ellipse([x - s, y - s, x + s, y + s], fill=(brightness, brightness, brightness))
 
     draw = ImageDraw.Draw(bg)
 
     # === TITOLO IN ALTO in Pacifico oro ===
-    font_size = 78
-    while font_size >= 44:
+    font_size = 84
+    while font_size >= 48:
         font_titolo = ImageFont.truetype(str(FONT_TITOLO), font_size)
-        righe = wrap_titolo(titolo, draw, font_titolo, W - 80)
+        righe = wrap_titolo(titolo, draw, font_titolo, W - 100)
         if len(righe) <= 2:
             break
         font_size -= 6
@@ -221,17 +286,25 @@ def crea_sfondo(img_path, titolo, out_path):
         w_text = bbox[2] - bbox[0]
         x = (W - w_text) // 2
         y = y_start + i * altezza_riga
-        for ox, oy in [(2, 2), (-2, 2), (2, -2), (-2, -2)]:
+        for ox, oy in [(3, 3), (-3, 3), (3, -3), (-3, -3)]:
             draw.text((x + ox, y + oy), riga, fill=(0, 0, 0), font=font_titolo)
         draw.text((x, y), riga, fill=BRAND_ORO, font=font_titolo)
 
-    # === IMMAGINE QUADRATA SOTTO IL TITOLO ===
+    # === IMMAGINE quadrata centrata con angoli arrotondati + ombra ===
     img = Image.open(img_path).convert("RGB")
     s = min(img.size)
     left = (img.width - s) // 2
     top = (img.height - s) // 2
     img = img.crop((left, top, left + s, top + s)).resize((IMG_SIZE, IMG_SIZE), Image.LANCZOS)
-    bg.paste(img, (0, IMG_TOP))
+    img_rounded = arrotonda_angoli(img, IMG_CORNER_RADIUS)
+
+    # Ombra morbida dietro l'immagine
+    shadow = Image.new("RGBA", (IMG_SIZE + 80, IMG_SIZE + 80), (0, 0, 0, 0))
+    sd = ImageDraw.Draw(shadow)
+    sd.rounded_rectangle((40, 40, IMG_SIZE + 40, IMG_SIZE + 40), radius=IMG_CORNER_RADIUS, fill=(0, 0, 0, 140))
+    shadow = shadow.filter(ImageFilter.GaussianBlur(20))
+    bg.paste(shadow, (IMG_LEFT - 40, IMG_TOP - 30), shadow)
+    bg.paste(img_rounded, (IMG_LEFT, IMG_TOP), img_rounded)
     draw = ImageDraw.Draw(bg)
 
     # === FOOTER: logo gufetto + testo brand ===
@@ -270,25 +343,12 @@ def crea_sfondo(img_path, titolo, out_path):
         draw.text(((W - wm_w) // 2, footer_y_centro - 24), wm, fill=BRAND_ORO, font=font_wm)
 
     bg.save(out_path, "PNG")
-    print(f"  Sfondo creato: {out_path.name} (logo {'incluso' if has_logo else 'mancante, solo testo'})")
+    print(f"  Sfondo creato: {Path(out_path).name} (logo {'incluso' if has_logo else 'mancante, solo testo'})")
 
 
-def crea_video(sfondo, mp3, srt, out_mp4, fonts_dir):
-    """FFmpeg: combina sfondo + audio + sottotitoli karaoke."""
-    # Posiziona i sottotitoli al centro verticale della zona SUBS_AREA (1280-1740)
-    # MarginV in ASS Alignment=2 e' la distanza dal BASSO del frame
-    centro_subs = (SUBS_AREA[0] + SUBS_AREA[1]) // 2
-    margin_v = H - centro_subs
-    style = (
-        "FontName=Coming Soon,FontSize=25,"
-        f"PrimaryColour=&H{TESTO_SOTT_BIANCO},"
-        "OutlineColour=&H000000,"
-        f"BackColour=&H{TESTO_SOTT_BG},"
-        "BorderStyle=4,Outline=2,Shadow=0,"
-        f"MarginV={margin_v},MarginL=80,MarginR=80,"
-        "Alignment=2,Spacing=0.2,Bold=1"
-    )
-    vf = f"subtitles={srt}:fontsdir={fonts_dir}:force_style='{style}'"
+def crea_video(sfondo, mp3, ass, out_mp4, fonts_dir):
+    """FFmpeg: combina sfondo + audio + sottotitoli ASS."""
+    vf = f"subtitles={ass}:fontsdir={fonts_dir}"
     cmd = [
         "ffmpeg", "-y",
         "-loop", "1", "-framerate", "25",
@@ -363,30 +423,32 @@ def main():
 
     mp3_raw = tmp_dir / f"{slug}-raw.mp3"
     mp3 = audio_dir / f"{slug}.mp3"
-    srt = tmp_dir / f"{slug}.srt"
+    ass = tmp_dir / f"{slug}.ass"
     sfondo = tmp_dir / f"{slug}-sfondo.png"
     mp4 = video_dir / f"{slug}.mp4"
 
-    # Costruisce testo con pause: [0.6s] titolo. [1s] storia [1s finale]
+    # Aggiungi pause dopo ogni . ! ? nel testo storia
+    testo_con_pause = aggiungi_pause_narrative(testo)
+
+    # Struttura: [pausa] titolo [pausa lunga] storia [pausa finale]
     testo_per_api = (
         f'<break time="0.6s"/> {titolo}. '
-        f'<break time="1.0s"/> {testo} '
+        f'<break time="1.0s"/> {testo_con_pause} '
         f'<break time="1.0s"/>'
     )
     parole_titolo = len(titolo.split())
-    print(f"  Struttura audio: pausa -> '{titolo}' ({parole_titolo} parole) -> pausa -> storia")
+    n_pause_extra = testo_con_pause.count("<break")
+    print(f"  Struttura: pausa -> '{titolo}' ({parole_titolo} parole) -> pausa -> storia ({n_pause_extra} pause extra)")
 
     alignment = genera_audio_e_timestamps(testo_per_api, args.voice_id, api_key, mp3_raw)
     parole_tutte = char_to_word_timestamps(alignment)
-    # Skippa le parole del titolo: nei sottotitoli mostriamo solo la storia
-    # (il titolo e' gia' in alto come testo grafico, sarebbe ridondante)
     parole_storia = parole_tutte[parole_titolo:]
     print(f"  Parole totali: {len(parole_tutte)} (titolo {parole_titolo}, storia {len(parole_storia)})")
 
-    genera_srt(parole_storia, srt)
+    genera_ass(parole_storia, ass)
     pitch_shift_audio(mp3_raw, mp3)
     crea_sfondo(img_path, titolo, sfondo)
-    crea_video(sfondo, mp3, srt, mp4, FONT_SOTT.parent)
+    crea_video(sfondo, mp3, ass, mp4, FONT_SOTT.parent)
 
     for f in tmp_dir.iterdir():
         f.unlink()
