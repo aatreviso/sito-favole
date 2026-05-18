@@ -44,11 +44,19 @@ LOGO_PATH = REPO_ROOT / "assets/branding/logo.png"
 
 # ====== LAYOUT VIDEO 9:16 ======
 W, H = 1080, 1920
-IMG_TOP = 0
-IMG_SIZE = 1080
-TITLE_AREA = (1080, 1240)          # 160 px area titolo
-SUBS_AREA = (1240, 1800)           # 560 px area sottotitoli
-FOOTER_AREA = (1800, 1920)         # 120 px area logo + testo brand
+TITLE_AREA = (0, 200)              # 200 px titolo in alto
+IMG_TOP = 200                       # immagine quadrata sotto il titolo
+IMG_SIZE = 1080                     # da y=200 a y=1280
+SUBS_AREA = (1280, 1740)            # 460 px area sottotitoli sotto l'immagine
+FOOTER_AREA = (1740, 1920)          # 180 px footer logo + brand
+
+# ====== VOCE (settaggi narrazione favole) ======
+VOICE_SPEED = 0.92                  # 1.0=normale, 0.7-1.2 range. 0.92=8% piu lento
+VOICE_STABILITY = 0.65              # piu alto = piu calma/consistente
+VOICE_SIMILARITY = 0.75
+VOICE_STYLE = 0.05
+# Pitch shift FFmpeg per voce piu profonda (-1.5 semitoni, durata invariata)
+PITCH_FACTOR = 0.917                # <1.0 = piu grave
 
 
 def slugify(s):
@@ -71,16 +79,38 @@ def genera_audio_e_timestamps(testo, voice_id, api_key, out_mp3):
         "text": testo,
         "model_id": DEFAULT_MODEL,
         "output_format": "mp3_44100_128",
+        "voice_settings": {
+            "stability": VOICE_STABILITY,
+            "similarity_boost": VOICE_SIMILARITY,
+            "style": VOICE_STYLE,
+            "use_speaker_boost": True,
+            "speed": VOICE_SPEED,
+        },
     }
-    print(f"  Chiamata ElevenLabs ({len(testo)} caratteri)...")
+    print(f"  Chiamata ElevenLabs ({len(testo)} caratteri, speed={VOICE_SPEED})...")
     r = requests.post(url, headers=headers, json=body, timeout=180)
     if r.status_code != 200:
         sys.exit(f"  Errore ElevenLabs {r.status_code}: {r.text[:300]}")
     data = r.json()
     audio_bytes = base64.b64decode(data["audio_base64"])
     out_mp3.write_bytes(audio_bytes)
-    print(f"  MP3 salvato: {out_mp3.name} ({len(audio_bytes)/1024:.0f} KB)")
+    print(f"  MP3 raw salvato: {out_mp3.name} ({len(audio_bytes)/1024:.0f} KB)")
     return data["alignment"]
+
+
+def pitch_shift_audio(mp3_in, mp3_out, pitch_factor=PITCH_FACTOR):
+    """Abbassa il pitch dell'audio mantenendo durata invariata."""
+    tempo = 1.0 / pitch_factor
+    cmd = [
+        "ffmpeg", "-y", "-i", str(mp3_in),
+        "-af", f"asetrate=44100*{pitch_factor},aresample=44100,atempo={tempo:.4f}",
+        "-c:a", "libmp3lame", "-b:a", "128k",
+        str(mp3_out),
+    ]
+    r = subprocess.run(cmd, capture_output=True, text=True)
+    if r.returncode != 0:
+        sys.exit(f"  Errore pitch shift:\n{r.stderr[-400:]}")
+    print(f"  Pitch shift applicato (-{(1-pitch_factor)*12:.1f} semitoni)")
 
 
 def char_to_word_timestamps(alignment):
@@ -109,7 +139,7 @@ def char_to_word_timestamps(alignment):
     return parole
 
 
-def genera_srt(parole, out_srt, max_parole=5, max_chars=38):
+def genera_srt(parole, out_srt, max_parole=4, max_chars=30):
     chunks = []
     current = []
     cur_chars = 0
@@ -150,7 +180,7 @@ def wrap_titolo(testo, draw, font, max_width):
 
 
 def crea_sfondo(img_path, titolo, out_path):
-    """Crea PNG 1080x1920 con immagine quadrata in alto, titolo, footer brand."""
+    """Crea PNG 1080x1920 con titolo in alto, immagine al centro, footer in basso."""
     bg = Image.new("RGB", (W, H))
     gd = ImageDraw.Draw(bg)
 
@@ -162,27 +192,20 @@ def crea_sfondo(img_path, titolo, out_path):
         b = int(BRAND_BLU[2] - (BRAND_BLU[2] - BRAND_BLU_SCURO[2]) * t)
         gd.line([(0, y), (W, y)], fill=(r, g, b))
 
-    # Qualche stellina nella zona sotto l'immagine (atmosfera notturna)
+    # Stelline nelle zone vuote (sopra il titolo e sotto l'immagine)
     random.seed(7)
-    for _ in range(40):
+    for _ in range(60):
         x = random.randint(0, W)
-        y = random.randint(IMG_SIZE + 20, H - 40)
+        # Zona sotto l'immagine (sottotitoli + footer)
+        y = random.randint(IMG_TOP + IMG_SIZE + 10, H - 30)
         s = random.choice([1, 1, 2])
-        brightness = random.randint(160, 220)
+        brightness = random.randint(140, 200)
         gd.ellipse([x - s, y - s, x + s, y + s], fill=(brightness, brightness, brightness))
-
-    # Immagine quadrata in alto (crop + resize)
-    img = Image.open(img_path).convert("RGB")
-    s = min(img.size)
-    left = (img.width - s) // 2
-    top = (img.height - s) // 2
-    img = img.crop((left, top, left + s, top + s)).resize((IMG_SIZE, IMG_SIZE), Image.LANCZOS)
-    bg.paste(img, (0, IMG_TOP))
 
     draw = ImageDraw.Draw(bg)
 
-    # Titolo in Pacifico oro
-    font_size = 76
+    # === TITOLO IN ALTO in Pacifico oro ===
+    font_size = 78
     while font_size >= 44:
         font_titolo = ImageFont.truetype(str(FONT_TITOLO), font_size)
         righe = wrap_titolo(titolo, draw, font_titolo, W - 80)
@@ -190,7 +213,7 @@ def crea_sfondo(img_path, titolo, out_path):
             break
         font_size -= 6
 
-    altezza_riga = int(font_size * 1.1)
+    altezza_riga = int(font_size * 1.05)
     altezza_totale = altezza_riga * len(righe)
     y_start = TITLE_AREA[0] + (TITLE_AREA[1] - TITLE_AREA[0] - altezza_totale) // 2
     for i, riga in enumerate(righe):
@@ -198,33 +221,39 @@ def crea_sfondo(img_path, titolo, out_path):
         w_text = bbox[2] - bbox[0]
         x = (W - w_text) // 2
         y = y_start + i * altezza_riga
-        # piccolo glow/shadow scuro per leggibilita
         for ox, oy in [(2, 2), (-2, 2), (2, -2), (-2, -2)]:
             draw.text((x + ox, y + oy), riga, fill=(0, 0, 0), font=font_titolo)
         draw.text((x, y), riga, fill=BRAND_ORO, font=font_titolo)
 
-    # Footer: logo gufetto + testo brand
+    # === IMMAGINE QUADRATA SOTTO IL TITOLO ===
+    img = Image.open(img_path).convert("RGB")
+    s = min(img.size)
+    left = (img.width - s) // 2
+    top = (img.height - s) // 2
+    img = img.crop((left, top, left + s, top + s)).resize((IMG_SIZE, IMG_SIZE), Image.LANCZOS)
+    bg.paste(img, (0, IMG_TOP))
+    draw = ImageDraw.Draw(bg)
+
+    # === FOOTER: logo gufetto + testo brand ===
     footer_y_centro = (FOOTER_AREA[0] + FOOTER_AREA[1]) // 2
     has_logo = LOGO_PATH.exists()
     if has_logo:
         try:
             logo = Image.open(LOGO_PATH).convert("RGBA")
-            # Ridimensiona logo a 90px altezza
-            logo_h = 90
+            logo_h = 130
             logo_w = int(logo.width * (logo_h / logo.height))
             logo = logo.resize((logo_w, logo_h), Image.LANCZOS)
-            # Composito sul background
-            font_wm = ImageFont.truetype(str(FONT_SOTT), 32)
+            font_wm = ImageFont.truetype(str(FONT_SOTT), 40)
             wm = "favoleperdormire.it"
             bbox = draw.textbbox((0, 0), wm, font=font_wm)
             wm_w = bbox[2] - bbox[0]
-            gap = 25
+            gap = 30
             total_w = logo_w + gap + wm_w
             x_start = (W - total_w) // 2
             bg.paste(logo, (x_start, footer_y_centro - logo_h // 2), logo)
             draw = ImageDraw.Draw(bg)
             draw.text(
-                (x_start + logo_w + gap, footer_y_centro - 18),
+                (x_start + logo_w + gap, footer_y_centro - 22),
                 wm,
                 fill=BRAND_ORO,
                 font=font_wm,
@@ -234,11 +263,11 @@ def crea_sfondo(img_path, titolo, out_path):
             has_logo = False
 
     if not has_logo:
-        font_wm = ImageFont.truetype(str(FONT_SOTT), 36)
+        font_wm = ImageFont.truetype(str(FONT_SOTT), 44)
         wm = "favoleperdormire.it"
         bbox = draw.textbbox((0, 0), wm, font=font_wm)
         wm_w = bbox[2] - bbox[0]
-        draw.text(((W - wm_w) // 2, footer_y_centro - 20), wm, fill=BRAND_ORO, font=font_wm)
+        draw.text(((W - wm_w) // 2, footer_y_centro - 24), wm, fill=BRAND_ORO, font=font_wm)
 
     bg.save(out_path, "PNG")
     print(f"  Sfondo creato: {out_path.name} (logo {'incluso' if has_logo else 'mancante, solo testo'})")
@@ -246,15 +275,18 @@ def crea_sfondo(img_path, titolo, out_path):
 
 def crea_video(sfondo, mp3, srt, out_mp4, fonts_dir):
     """FFmpeg: combina sfondo + audio + sottotitoli karaoke."""
-    margin_v = H - SUBS_AREA[1] + 20
+    # Posiziona i sottotitoli al centro verticale della zona SUBS_AREA (1280-1740)
+    # MarginV in ASS Alignment=2 e' la distanza dal BASSO del frame
+    centro_subs = (SUBS_AREA[0] + SUBS_AREA[1]) // 2
+    margin_v = H - centro_subs
     style = (
-        "FontName=Coming Soon,FontSize=48,"
+        "FontName=Coming Soon,FontSize=25,"
         f"PrimaryColour=&H{TESTO_SOTT_BIANCO},"
         "OutlineColour=&H000000,"
         f"BackColour=&H{TESTO_SOTT_BG},"
-        "BorderStyle=4,Outline=3,Shadow=0,"
-        f"MarginV={margin_v},MarginL=60,MarginR=60,"
-        "Alignment=2,Spacing=0.3,Bold=1"
+        "BorderStyle=4,Outline=2,Shadow=0,"
+        f"MarginV={margin_v},MarginL=80,MarginR=80,"
+        "Alignment=2,Spacing=0.2,Bold=1"
     )
     vf = f"subtitles={srt}:fontsdir={fonts_dir}:force_style='{style}'"
     cmd = [
@@ -329,15 +361,30 @@ def main():
     video_dir.mkdir(parents=True, exist_ok=True)
     tmp_dir.mkdir(parents=True, exist_ok=True)
 
+    mp3_raw = tmp_dir / f"{slug}-raw.mp3"
     mp3 = audio_dir / f"{slug}.mp3"
     srt = tmp_dir / f"{slug}.srt"
     sfondo = tmp_dir / f"{slug}-sfondo.png"
     mp4 = video_dir / f"{slug}.mp4"
 
-    alignment = genera_audio_e_timestamps(testo, args.voice_id, api_key, mp3)
-    parole = char_to_word_timestamps(alignment)
-    print(f"  Parole estratte: {len(parole)}")
-    genera_srt(parole, srt)
+    # Costruisce testo con pause: [0.6s] titolo. [1s] storia [1s finale]
+    testo_per_api = (
+        f'<break time="0.6s"/> {titolo}. '
+        f'<break time="1.0s"/> {testo} '
+        f'<break time="1.0s"/>'
+    )
+    parole_titolo = len(titolo.split())
+    print(f"  Struttura audio: pausa -> '{titolo}' ({parole_titolo} parole) -> pausa -> storia")
+
+    alignment = genera_audio_e_timestamps(testo_per_api, args.voice_id, api_key, mp3_raw)
+    parole_tutte = char_to_word_timestamps(alignment)
+    # Skippa le parole del titolo: nei sottotitoli mostriamo solo la storia
+    # (il titolo e' gia' in alto come testo grafico, sarebbe ridondante)
+    parole_storia = parole_tutte[parole_titolo:]
+    print(f"  Parole totali: {len(parole_tutte)} (titolo {parole_titolo}, storia {len(parole_storia)})")
+
+    genera_srt(parole_storia, srt)
+    pitch_shift_audio(mp3_raw, mp3)
     crea_sfondo(img_path, titolo, sfondo)
     crea_video(sfondo, mp3, srt, mp4, FONT_SOTT.parent)
 
