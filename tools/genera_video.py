@@ -43,30 +43,32 @@ LOGO_PATH = REPO_ROOT / "assets/branding/logo.png"
 
 # ====== LAYOUT VIDEO 9:16 (in pixel) ======
 W, H = 1080, 1920
-TITLE_AREA = (40, 280)             # 240 px titolo in alto (con padding)
-IMG_TOP = 320                       # immagine sotto il titolo, con aria
-IMG_SIZE = 880                      # immagine 880x880 (era 1080)
-IMG_LEFT = (W - IMG_SIZE) // 2     # centrata
-IMG_CORNER_RADIUS = 60             # angoli arrotondati
-SUBS_AREA = (1240, 1740)            # 500 px area sottotitoli
+TITLE_AREA = (30, 250)             # 220 px titolo, leggermente piu in alto
+IMG_TOP = 290                       # immagine subito sotto il titolo
+IMG_SIZE = 880                      # immagine 880x880
+IMG_LEFT = (W - IMG_SIZE) // 2
+IMG_CORNER_RADIUS = 60
+SUBS_AREA = (1210, 1730)            # 520 px area sottotitoli
 FOOTER_AREA = (1740, 1920)          # 180 px footer
 
 # ====== VOCE ======
-VOICE_SPEED = 0.92                  # 0.92 = 8% piu lento
-VOICE_STABILITY = 0.40              # piu basso = piu espressiva/variata
+VOICE_SPEED = 0.92
+VOICE_STABILITY = 0.40
 VOICE_SIMILARITY = 0.75
-VOICE_STYLE = 0.45                  # piu alto = piu gioiosa/caratterizzata
-# Pitch shift FFmpeg lieve (-0.5 semitoni), per rendere meno roca
-PITCH_FACTOR = 0.97                 # <1.0 = piu grave. 0.97 = -0.5 semitoni
-PAUSA_FRASE_SEC = 0.35              # pausa dopo ogni . ! ?
+VOICE_STYLE = 0.45
+PITCH_FACTOR = 0.97                 # -0.5 semitoni
+PAUSA_FRASE_SEC = 0.35
 
 # ====== SOTTOTITOLI (ASS style in pixel veri) ======
-SUBS_FONTSIZE = 72                  # in pixel (PlayResY=1920)
-SUBS_OUTLINE = 4
+SUBS_FONTSIZE = 84                  # piu grande (era 72)
+SUBS_OUTLINE = 5
 SUBS_MAX_PAROLE = 4
-SUBS_MAX_CHARS = 28
+SUBS_MAX_CHARS = 26
 SUBS_MARGIN_L = 60
 SUBS_MARGIN_R = 60
+
+# ====== LOGO ======
+LOGO_HEIGHT = 160                   # piu grande (era 130)
 
 
 def slugify(s):
@@ -147,7 +149,21 @@ def char_to_word_timestamps(alignment):
     buf = []
     p_start = None
     p_end = None
+    in_tag = False  # skippa i caratteri dentro <...> (tag SSML come <break.../>)
+
     for c, s, e in zip(chars, starts, ends):
+        if c == "<":
+            in_tag = True
+            if buf:
+                parole.append({"testo": "".join(buf), "start": p_start, "end": p_end})
+                buf = []
+                p_start = None
+            continue
+        if c == ">":
+            in_tag = False
+            continue
+        if in_tag:
+            continue
         if c.isspace() or c in '.,!?;:"“”()[]…':
             if buf:
                 parole.append({"testo": "".join(buf), "start": p_start, "end": p_end})
@@ -313,10 +329,10 @@ def crea_sfondo(img_path, titolo, out_path):
     if has_logo:
         try:
             logo = Image.open(LOGO_PATH).convert("RGBA")
-            logo_h = 130
+            logo_h = LOGO_HEIGHT
             logo_w = int(logo.width * (logo_h / logo.height))
             logo = logo.resize((logo_w, logo_h), Image.LANCZOS)
-            font_wm = ImageFont.truetype(str(FONT_SOTT), 40)
+            font_wm = ImageFont.truetype(str(FONT_SOTT), 44)
             wm = "favoleperdormire.it"
             bbox = draw.textbbox((0, 0), wm, font=font_wm)
             wm_w = bbox[2] - bbox[0]
