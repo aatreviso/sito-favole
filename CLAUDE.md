@@ -98,6 +98,57 @@ Tempi sviluppo: 2-3 giorni.
 - Backend leggero: Cloudflare Workers free tier o estensione del backend Conquizzone su Railway
 - **Decisione finale lanciare/non lanciare**: rimandata, dopo aver visto i numeri reali di app + ads. Utente ok in linea di principio (fiscalità chiara, stesso flusso Google → P.IVA Torpal degli AdMob di Conquizzone).
 
+## 🎁 Monetizzazione app: modello 3-tier (definito 18 maggio 2026)
+
+Decisione architetturale dopo brainstorming con utente.
+
+### Tier 1 — Free senza rewarded (entry level)
+- Tutte le favole testuali leggibili
+- Banner AdMob in basso (non in pagina lettura)
+- 1 interstitial ogni N favole completate (mai durante TTS)
+- TTS solo con voce nativa Android (gratis ma robotica)
+
+### Tier 2 — Free con Rewarded (sblocchi temporanei opt-in)
+
+| Sblocco | Cosa ottiene | Durata | Frequency cap |
+|---|---|---|---|
+| Voce Gufetto (ElevenLabs) | Audio premium narrato dalla voce brand | 1 ora | max 2-3/giorno |
+| Timer nanna esteso | Riproduzione consecutiva favole narrate | 1 ora (vs 15 min default) | 1/giorno |
+| Favola speciale della settimana | Contenuto esclusivo settimanale rotante | tutta la settimana | 1/settimana |
+| 3 favole offline (anche audio) | Bonus iniziale per "tasting" della funzione | permanente | 1 sola volta |
+
+UX rewarded:
+- Countdown chiaro durante lo sblocco ("✨ Voce attiva: 47 min rimanenti")
+- Reminder a 5 minuti dalla scadenza con offerta "guarda altro video per +1 ora"
+- Mai forzati, sempre triggered dall'utente
+
+### Tier 3 — Favole Plus (subscription, €2,99/mese o €19,99/anno)
+
+| Feature | Free | Free + Rewarded | Plus |
+|---|---|---|---|
+| Lettura favole testuali | ✅ | ✅ | ✅ |
+| Voce Gufetto (ElevenLabs) | ❌ | 1h temp | **Sempre attiva** |
+| Timer nanna | 15 min | 1h temp | **2 ore** |
+| Riordino playlist timer (drag&drop) | ❌ | ❌ | **Sì** |
+| Banner / Interstitial | ✅ visti | ✅ visti | **Niente** |
+| Musica di sottofondo (4 tracce) | ❌ | ❌ | **Sì, selezionabile** |
+| Download offline favole + audio | 3 slot | 3 slot | **Illimitato** |
+| Favola speciale settimanale | Rewarded | Rewarded | **Sempre sbloccata** |
+
+Trial gratuito: 7 giorni (Google Play standard, aumenta conv 30-50%).
+
+### Considerazioni implementative aperte
+- **Timer "narrate consecutivamente"**: ordine default da definire. Probabilmente: ultima riprodotta + favole stessa categoria. Plus permette drag&drop manuale.
+- **Musica sottofondo**: 4 tracce royalty-free (Pixabay/FreePD) curate ad hoc: "ninna nanna pianoforte", "foresta notturna", "mare calmo", "pioggia leggera". Volume dinamico via FFmpeg sidechain compress (25-30% sotto voce, 60% nelle pause).
+- **Offline storage**: ~5-10MB per favola (testo + audio). 3 offline gratis = ~30MB, illimitato Plus = anche se scarica tutte le 75 favole sono <800MB, gestibile.
+- **Frequency cap rewarded**: max 3 rewarded/sessione utente, max 5/giorno. Sopra → mostra messaggio "torna domani per più sblocchi" (no nag).
+
+### Numeri attesi (rivisti, 10.000 MAU)
+- Subscription Plus 2% conv = 200 × €2,99 × 0,85 (Google fee 15%) = **~€508/mese**
+- Rewarded (9.800 non-paganti × 1,5 ad/giorno × $5 eCPM) = **~€600/mese**
+- Banner + interstitial sui non-paganti = **~€700/mese**
+- **Totale app: ~€1.800/mese** (in linea con stima iniziale di €1.500-2.500)
+
 ## 🔑 Account condivisi con Conquizzone
 
 - **Play Console**: stesso account dev (Torpal di Alessandro Zaratin). $25 dev fee già pagati. Aggiungiamo Favole come nuova app sullo stesso account, costo aggiuntivo 0€.
